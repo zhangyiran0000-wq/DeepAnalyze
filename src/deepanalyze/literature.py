@@ -24,12 +24,14 @@ from difflib import SequenceMatcher
 from html.parser import HTMLParser
 from pathlib import Path
 
+from .source_pages import parse_source_page, parse_arxiv_search_abstract
+
 
 class LiteratureError(RuntimeError):
     """A public, credential-free retrieval failure."""
 
 
-HOSTS = {"api.semanticscholar.org", "api.crossref.org", "export.arxiv.org", "arxiv.org", "www.arxiv.org"}
+HOSTS = {"api.semanticscholar.org", "api.crossref.org", "export.arxiv.org", "arxiv.org", "www.arxiv.org", "aclanthology.org"}
 ARXIV = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?", re.I)
 FIELDS = "paperId,title,abstract,year,publicationDate,url,authors,externalIds,citationCount"
 METADATA_FIELDS = "paperId,title,year,publicationDate,externalIds,url"
@@ -228,11 +230,38 @@ class LiteratureClient:
         arxiv = (enriched.get("external_ids") or {}).get("arxiv")
         if arxiv:
             arxiv = re.sub(r"v\d+$", "", arxiv); merged["available_arxiv_html"] = "https://arxiv.org/html/" + arxiv; merged["available_arxiv_pdf"] = "https://arxiv.org/pdf/" + arxiv
+        if enriched.get("available_source_pdf"):
+            merged["available_source_pdf"] = enriched["available_source_pdf"]
         merged["enrichment_source"] = source_label
         return _normalize_record(merged)
 
+    def _landing_paper(self, url, *, expected_title=None, expected_doi=None, expected_arxiv=None):
+        raw = self._fetch(url, max_bytes=3_000_000).decode("utf-8", "replace")
+        try:
+            data = parse_source_page(raw, url, expected_title=expected_title,
+                                     expected_doi=expected_doi, expected_arxiv=expected_arxiv)
+        except ValueError:
+            raise LiteratureError("The source page did not match the expected paper identity.") from None
+        paper = _paper(data["title"], date=data.get("date"), url=url,
+                       abstract=data.get("abstract", ""), authors=data.get("authors", []),
+                       external_ids=data.get("external_ids", {}), metadata_source=url,
+                       metadata_label="Official scholarly landing page")
+        if data.get("pdf_url"):
+            paper["available_source_pdf"] = data["pdf_url"]
+        return paper
+
     def _enrich_alternate_sources(self, paper):
         title = paper.get("title", ""); doi = (paper.get("external_ids") or {}).get("doi")
+        # ACL DOI suffixes provide an exact publisher landing page without
+        # broad web crawling or interpreting arbitrary links from a document.
+        acl = re.fullmatch(r"10\.(?:18653|3115)/v1/([A-Za-z0-9.-]+)", doi or "", re.I)
+        if acl:
+            try:
+                alt = self._landing_paper("https://aclanthology.org/" + acl.group(1) + "/",
+                                          expected_title=title, expected_doi=doi)
+                paper = self._merge_enrichment(paper, alt, source_label="ACL Anthology landing page")
+            except LiteratureError:
+                pass
         if doi:
             try:
                 url = "https://api.semanticscholar.org/graph/v1/paper/DOI:" + urllib.parse.quote(doi, safe="") + "?" + urllib.parse.urlencode({"fields": FIELDS})
@@ -279,14 +308,23 @@ class LiteratureClient:
             aid = match.group(0)
             affiliations = [x.text or "" for x in entry.findall("a:author/x:affiliation", ns)]
             results.append(_paper(entry.findtext("a:title", "", ns), date=entry.findtext("a:published", "", ns)[:10] or None, url=f"https://arxiv.org/abs/{aid}", abstract=entry.findtext("a:summary", "", ns), authors=[a.findtext("a:name", "", ns) for a in entry.findall("a:author", ns)], affiliations=affiliations, external_ids={"arxiv": aid}, metadata_source=metadata_url, metadata_label="arXiv Atom metadata"))
+        if not results and identifier:
+            try:
+                results = [self._landing_paper("https://arxiv.org/abs/" + identifier,
+                                              expected_arxiv=identifier)]
+            except LiteratureError:
+                pass
         if not results and query and not identifier:
-            page_url = "https://arxiv.org/search/?" + urllib.parse.urlencode({"query": str(query)[:300], "searchtype": "title" if exact_title else "all", "abstracts": "show", "order": "-announced_date_first" if sort == "newest" else "-relevance"})
+            page_args = {"query": str(query)[:300], "searchtype": "title" if exact_title else "all", "abstracts": "show"}
+            if sort == "newest":
+                page_args["order"] = "-announced_date_first"
+            page_url = "https://arxiv.org/search/?" + urllib.parse.urlencode(page_args)
             try:
                 page = self._fetch(page_url, max_bytes=3_000_000).decode("utf-8", "replace")
                 for block in re.findall(r"<li[^>]+class=\"arxiv-result\".*?</li>", page, re.S | re.I)[:limit]:
                     link = re.search(r"href=\"https?://arxiv.org/abs/([^\"]+)", block)
                     heading = re.search(r"<p[^>]+class=\"title[^>]*>(.*?)</p>", block, re.S | re.I)
-                    abstract = re.search(r"<span[^>]+class=\"abstract-full[^>]*>(.*?)</span>", block, re.S | re.I)
+                    abstract = parse_arxiv_search_abstract(block)
                     if link and heading:
                         aid = re.sub(r"v\d+$", "", link.group(1))
                         submitted = re.search(r"Submitted.*?(\d{1,2}\s+[A-Za-z]+,?\s+\d{4}|\d{4}-\d{2}-\d{2})", block, re.S | re.I)
@@ -297,7 +335,7 @@ class LiteratureClient:
                                 try: date = datetime.strptime(raw_date, fmt).date().isoformat(); break
                                 except ValueError: pass
                         authors = re.findall(r"<a[^>]+href=\"/search/\?searchtype=author[^>]*>(.*?)</a>", block, re.S | re.I)
-                        results.append(_paper(_plain(heading.group(1)), date=date, authors=[_plain(x) for x in authors], url="https://arxiv.org/abs/" + aid, abstract=_plain(abstract.group(1) if abstract else ""), external_ids={"arxiv": aid}, metadata_source=page_url, metadata_label="arXiv search metadata"))
+                        results.append(_paper(_plain(heading.group(1)), date=date, authors=[_plain(x) for x in authors], url="https://arxiv.org/abs/" + aid, abstract=abstract, external_ids={"arxiv": aid}, metadata_source=page_url, metadata_label="arXiv search metadata"))
             except LiteratureError:
                 pass
         return results
@@ -333,8 +371,11 @@ class LiteratureClient:
         if re.match(r"^10\.\d{4,9}/\S+$", doi):
             data = self._json("https://api.crossref.org/works/" + urllib.parse.quote(doi, safe=""))
             return self._enrich_alternate_sources(self._crossref_paper(data["message"]))
+        acl_url = re.fullmatch(r"https://aclanthology\.org/([A-Za-z0-9.-]+)/?", seed, re.I)
+        if acl_url:
+            return self._landing_paper("https://aclanthology.org/" + acl_url.group(1) + "/")
         if "://" in seed:
-            raise LiteratureError("Use a paper title, DOI link, or arXiv link. Arbitrary URLs are not fetched.")
+            raise LiteratureError("Use a paper title, DOI link, arXiv link, or ACL Anthology paper link. Arbitrary URLs are not fetched.")
         results = self.search(seed, limit=5)
         if not results:
             raise LiteratureError("No matching paper was found. Try the DOI or arXiv identifier.")
@@ -605,6 +646,15 @@ class LiteratureClient:
             if paper.get(field): result[field] = copy.deepcopy(paper[field])
         for field in ("date", "year", "abstract"):
             if not result.get(field) and paper.get(field): result[field] = copy.deepcopy(paper[field])
+        # A nested search-highlight span used to truncate abstracts. Safely
+        # extend that cached prefix when the same paper supplies its full text.
+        incoming, existing = paper.get("abstract") or "", result.get("abstract") or ""
+        if existing and len(incoming) > len(existing) and incoming.startswith(existing):
+            result["abstract"] = incoming
+            for passage in result.get("passages", []):
+                if passage.get("location") == "Abstract" and passage.get("text") == existing:
+                    passage["text"] = incoming
+                    passage["url"] = paper.get("url") or passage.get("url", "")
         result["external_ids"] = {**result.get("external_ids", {}), **paper.get("external_ids", {})}
         result = _normalize_record(result)
         result["cache_hit"] = True
@@ -631,6 +681,13 @@ class LiteratureClient:
         if not identifier:
             match = ARXIV.search(paper.get("url", "")) if "arxiv.org/" in paper.get("url", "") else None
             identifier = match.group(0) if match else None
+        if identifier and ARXIV.fullmatch(identifier) and not self._readable(result):
+            try:
+                alt = self._landing_paper("https://arxiv.org/abs/" + identifier,
+                                          expected_title=result.get("title"), expected_arxiv=identifier)
+                result = self._merge_enrichment(result, alt, source_label="arXiv landing page")
+            except LiteratureError:
+                pass
         # Enrichment may reveal an exact alias under which readable evidence was
         # already cached. Recheck before downloading the body.
         cached, cached_path = self._cached_read(result)
@@ -669,6 +726,22 @@ class LiteratureClient:
                     result["read_note"] = "Full text unavailable; only supplied metadata/abstract can support claims. Install the optional PDF extra to enable PDF extraction."
                 except Exception:
                     result["read_note"] = "Full text extraction failed; only supplied metadata/abstract can support claims."
+        publisher_pdf = result.get("available_source_pdf")
+        if not paragraphs and publisher_pdf and _allowed(publisher_pdf) and publisher_pdf != source_url:
+            try:
+                from pypdf import PdfReader
+                raw = self._fetch(publisher_pdf, max_bytes=20_000_000)
+                reader = PdfReader(io.BytesIO(raw))
+                for number, page in enumerate(reader.pages[:150], 1):
+                    text = page.extract_text() or ""
+                    if text.strip():
+                        paragraphs.append((f"PDF page {number}", text))
+                if paragraphs:
+                    source_url = publisher_pdf
+            except (ImportError, LiteratureError):
+                result["read_note"] = "Publisher PDF unavailable; only the recorded abstract can support claims."
+            except Exception:
+                result["read_note"] = "Publisher PDF extraction failed; only recorded source passages are available."
         if paragraphs:
             passages = []
             for location, block in paragraphs:

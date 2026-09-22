@@ -36,7 +36,7 @@ python -m pip install -e .
 deepanalyze
 ```
 
-Optional PDF extraction (arXiv HTML is tried first):
+Optional PDF extraction (arXiv HTML is tried first; ACL publisher PDFs are also supported):
 
 ```sh
 python -m pip install -e ".[pdf]"
@@ -52,7 +52,7 @@ It does not require a separate agent framework.
 
 1. Open **Connect Codex**. Reuse an existing local login, choose ChatGPT sign-in,
    or enter an API key in the local connection dialog.
-2. Enter a paper title, DOI, or arXiv URL. A precise identifier avoids ambiguous
+2. Enter a paper title, DOI, arXiv URL, or ACL Anthology paper URL. A precise identifier avoids ambiguous
    title matches. Newer work is discovered during research; there is no fixed endpoint.
 3. Set the round, candidate, reading, model-call and time limits. The progress candidate count is the deduplicated literature pool scanned so far; the configured “Candidates / round” value is the per-round offer budget sent to Agent 1. Defaults are 10 rounds,
    30 candidates, 10 reads, 100 model calls and 300 minutes; reads are capped at 30 and
@@ -127,8 +127,11 @@ a proposal to review, not an independent measure of scientific understanding.
 
 Paper-level observations are shown when present: the author-stated problem, reported gains, evaluation protocol, limitations and costs, and positioning against prior work. Each observation carries its basis (author claim, reported experiment, model inference, or unknown) and evidence IDs. Initial reading is a research-judgment summary from available abstract/full text; targeted rereading can add evidence but does not replace that initial pass.
 
-Full text is currently attempted for arXiv HTML/PDF. Other sources may remain
-abstract-only or metadata-only; the UI preserves that distinction. Optional PDF
+Full text is currently attempted for arXiv HTML/PDF and identity-checked ACL
+Anthology PDFs. Official landing pages can recover abstracts and source links
+when metadata APIs fail. This fallback verifies paper identifiers and titles; it
+does not fetch arbitrary links. Other sources may remain abstract-only or
+metadata-only; the UI preserves that distinction. Optional PDF
 extraction is text-only and can lose equations, tables and scanned content.
 Source APIs may rate-limit requests or lack recent publications. A capped run
 does not imply that the literature is complete.
