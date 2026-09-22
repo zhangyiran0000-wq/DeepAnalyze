@@ -388,7 +388,13 @@ class RunStore:
                     root_id = current["id"]
                     start = next((s["iteration"] for s in current.get("snapshots", [])
                                   if s["id"] == parent.get("snapshot_id")), 0)
-                    iteration_limit = start + current["config"]["max_iterations"]
+                    if parent.get("reanalysis"):
+                        # The new budget covers one fixed-corpus pass at the
+                        # source draft's iteration number, including later retries.
+                        draft = self.working(current["id"]).get("synthesis_draft") or {}
+                        iteration_limit = max(1, int(draft.get("iteration") or 1))
+                    else:
+                        iteration_limit = start + current["config"]["max_iterations"]
                     break
                 current = self.get(parent["run_id"])
             limits = copy.deepcopy(current["config"])
@@ -412,6 +418,56 @@ class RunStore:
                     if parent.get("recovery") == "synthesis" and parent.get("run_id") == run_id:
                         return child["id"]
             return None
+
+    def reanalyze(self, run_id, config):
+        """Create a fresh-budget synthesis branch over the original readable sources."""
+        if config is None:
+            raise ValueError("A fresh run configuration is required.")
+        with self._lock:
+            original = self.get(run_id)
+            if original["status"] in {"running", "queued", "stopping"}:
+                raise ValueError("Stop the active exploration before reanalyzing it.")
+            working = self.working(run_id)
+            papers = working.get("papers")
+            read_ids = working.get("read_ids")
+            if not isinstance(papers, dict) or not papers or not isinstance(read_ids, list) or not read_ids:
+                raise ValueError("No readable cached sources are available for reanalysis.")
+            read_ids = list(dict.fromkeys(str(paper_id) for paper_id in read_ids))
+            if any(paper_id not in papers or not isinstance(papers[paper_id], dict) for paper_id in read_ids):
+                raise ValueError("Cached sources do not match the recorded read set.")
+            for paper_id in read_ids:
+                paper = papers[paper_id]
+                if paper.get("id") != paper_id or not (paper.get("abstract") or any(
+                        isinstance(row, dict) and row.get("text") and row.get("kind") != "metadata_affiliation"
+                        for row in paper.get("passages", []))):
+                    raise ValueError("Reanalysis requires readable, identity-matched cached sources.")
+            draft = working.get("synthesis_draft")
+            latest = original.get("latest_snapshot")
+            selected = draft if isinstance(draft, dict) and draft.get("seed_id") else latest
+            if not isinstance(selected, dict) or not selected.get("seed_id"):
+                raise ValueError("Reanalysis requires a saved draft or snapshot containing the seed.")
+            seed_id = str(selected["seed_id"])
+            if seed_id not in read_ids or seed_id not in papers:
+                raise ValueError("The saved seed is not present in the readable source set.")
+            branch = self.create(original["seed"], config, original["mode"],
+                                {"run_id": run_id, "snapshot_id": selected.get("id"),
+                                 "reanalysis": True, "draft_id": draft.get("id") if isinstance(draft, dict) else None})
+            cloned_working = {
+                "papers": {paper_id: copy.deepcopy(papers[paper_id]) for paper_id in read_ids},
+                "read_ids": list(read_ids),
+                "discovery": copy.deepcopy(working.get("discovery") or (selected.get("discovery") or {})),
+                "synthesis_draft": copy.deepcopy(selected),
+                "refinement": {},
+                "reanalyze_existing": True,
+                "retry_synthesis_only": True,
+                "fixed_corpus": True,
+                "exploration": copy.deepcopy(working.get("exploration", {})),
+            }
+            # This branch has no unread candidate frontier.
+            cloned_working["discovery"]["pending_candidates"] = []
+            self.working(branch["id"], cloned_working)
+            self.event(branch["id"], "queued", "Created an independent reanalysis branch from cached readable sources.")
+            return self.get(branch["id"])
 
     def retry_synthesis(self, run_id):
         """Continue saved analysis with the original exploration's remaining budget."""

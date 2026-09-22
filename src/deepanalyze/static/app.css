@@ -927,7 +927,23 @@ input {
   color: var(--ink);
   overflow-wrap: anywhere;
 }
-.seed-badge {
+.role-badge {
+  flex: 0 1 auto;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 7px;
+  line-height: 1.5;
+  letter-spacing: .35px;
+  color: var(--lane-ink);
+  background: var(--lane-bg);
+  border: 1px solid var(--lane-border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  font-weight: 650;
+}
+ .seed-badge {
   font-size: 7px;
   line-height: 1.5;
   letter-spacing: .6px;

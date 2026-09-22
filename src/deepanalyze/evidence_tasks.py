@@ -76,7 +76,7 @@ def plan_evidence_tasks(snapshot, papers, required_ids) -> list[dict]:
             tasks.append(item); seen.add(item["id"])
 
     valid_progressions = {(str(e.get("source")), str(e.get("target"))) for e in edges
-                          if e.get("status") == "supported" and e.get("kind") in {"addresses", "builds_on"}}
+                          if e.get("status") == "supported" and e.get("kind") in {"addresses", "builds_on", "challenges"}}
     failed_spine_other = {}
     for group in snapshot.get("groups", []) or []:
         if not isinstance(group, dict) or not isinstance(group.get("spine"), list):

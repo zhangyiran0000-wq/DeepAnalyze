@@ -199,6 +199,10 @@ def evaluate_groups(groups, nodes, edges, comparisons):
         elif len(members) == 1 and not bootstrap:
             warnings.append("singleton_group")
 
+        if group.get("explanation_model") == "knowledge_transitions_v1":
+            results.append(_knowledge_group(group, node_map, owners, edges, claim_complete, issues, warnings))
+            continue
+
         support = set()
         records = _records(group.get("member_support"))
         if not records:
@@ -273,3 +277,156 @@ def evaluate_groups(groups, nodes, edges, comparisons):
             "issues": issues, "warnings": warnings,
         })
     return results
+
+
+_KNOWLEDGE_ROLES = {"advance", "revision", "proposal", "incremental", "replication", "tooling"}
+_OUTCOMES = {"demonstrated", "partial", "not_tested", "contradicted", "unknown"}
+
+
+def _knowledge_group(group, nodes, owners, edges, claim_complete, issues, warnings):
+    """Check a stage account without making every retained paper a turning point."""
+    group_id = group["id"]
+    members = {key for key, node in nodes.items() if group_id in _ids(node.get("group_ids"))}
+    issues = list(issues)
+    def issue(code):
+        if code not in issues:
+            issues.append(code)
+    records = {}
+    support = set()
+    for record in _records(group.get("member_support")):
+        key = _text(record.get("paper_id"))
+        if key in records:
+            issue("duplicate_member_support")
+        records[key] = record
+        if key not in members or not _text(record.get("claim_connection")):
+            issue("invalid_member_support")
+            continue
+        if not _attributed(record.get("evidence_ids"), owners, {key}):
+            issue("invalid_member_evidence")
+            continue
+        if (record.get("role") not in _KNOWLEDGE_ROLES or not _text(record.get("knowledge_change"))
+                or not _text(record.get("removal_effect"))):
+            issue("missing_research_role")
+            continue
+        assessment = nodes[key].get("research_assessment") or {}
+        if (assessment.get("outcome") not in _OUTCOMES or not _text(assessment.get("claimed_problem"))
+                or (assessment.get("outcome") in {"demonstrated", "partial", "contradicted"}
+                    and not all(_text(assessment.get(field)) for field in ("demonstrated_result", "conditions")))
+                or not _attributed(assessment.get("evidence_ids"), owners, {key})):
+            issue("missing_research_assessment")
+            continue
+        support.add(key)
+    if members - records.keys():
+        issue("missing_member_support")
+    root = _text(group.get("root_id"))
+    if root not in members:
+        issue("invalid_stage_root")
+    candidates = {(e.get("source"), e.get("target")) for e in _records(edges)
+                  if _supported(e, owners, {"addresses", "builds_on", "challenges"})}
+    pairs, statements = set(), set()
+    for step in _records(group.get("spine")):
+        a, b = _text(step.get("source")), _text(step.get("target"))
+        before, after = _text(step.get("before")), _text(step.get("after"))
+        signature = (" ".join(before.casefold().split()), " ".join(after.casefold().split()))
+        if (a not in members or b not in members or a == b or (a, b) not in candidates
+                or not _text(step.get("claim_connection"))):
+            issue("invalid_spine_transition")
+            continue
+        if (not before or not after or signature[0] == signature[1]
+                or step.get("transition_type") not in {"advance", "revision", "reframing"}):
+            issue("missing_knowledge_transition")
+            continue
+        if signature in statements:
+            issue("redundant_knowledge_transition")
+            continue
+        if records.get(b, {}).get("role") in {"incremental", "replication"}:
+            issue("incremental_work_on_spine")
+            continue
+        statements.add(signature)
+        pairs.add((a, b))
+    if not isinstance(group.get("spine"), list) or any(not isinstance(step, dict) for step in group.get("spine", [])):
+        issue("invalid_spine_transition")
+    _, acyclic, depth = _spine_shape(pairs)
+    if not acyclic:
+        issue("cyclic_spine")
+    children = {key: set() for key in members}
+    for a, b in pairs:
+        children[a].add(b)
+    reached, pending = ({root}, [root]) if root in members and acyclic else (set(), [])
+    while pending:
+        extra = children[pending.pop()] - reached
+        reached.update(extra)
+        pending.extend(extra)
+    anchors = {root} | {key for pair in pairs for key in pair}
+    if anchors - reached:
+        issue("disconnected_spine")
+    covered = set()
+    attachments = []
+    for key in members & support:
+        record = records[key]
+        anchor = _text(record.get("stage_anchor_id"))
+        if key in reached:
+            if anchor != key:
+                issue("invalid_stage_attachment")
+            else:
+                covered.add(key)
+        elif (anchor in reached and anchor in support and anchor != key
+                and _attributed(record.get("attachment_evidence_ids"), owners, {key, anchor})):
+            covered.add(key)
+            attachments.append([key, anchor])
+        else:
+            issue("invalid_stage_attachment")
+    if not claim_complete:
+        covered.clear()
+    if members - covered:
+        issue("unexplained_members")
+    return {"group_id": group_id, "status": "evidence_linked" if members and not issues else "incomplete",
+            "spine_depth": depth, "knowledge_depth": depth,
+            "stage_anchor_ids": sorted(reached), "stage_attachments": attachments,
+            "transition_pairs": [list(pair) for pair in sorted(pairs)],
+            "covered_member_ids": sorted(covered), "unexplained_member_ids": sorted(members - covered),
+            "issues": issues, "warnings": warnings}
+
+
+def stage_connections(snapshot, reviewed_only=False):
+    """Undirected membership links for coverage only; never evolution or discovery edges."""
+    groups = {g["id"]: g for g in snapshot.get("groups", [])
+              if g.get("explanation_model") == "knowledge_transitions_v1"}
+    result = []
+    if not groups:
+        return result
+    edges = snapshot.get("edges", [])
+    if reviewed_only:
+        edges = [edge for edge in edges if edge.get("semantic_review", {}).get("status") == "supported"]
+    diagnostics = evaluate_groups(list(groups.values()), snapshot.get("nodes", []),
+                                  edges, snapshot.get("comparisons", []))
+    for item in diagnostics:
+        group = groups[item["group_id"]]
+        review = group.get("semantic_review", {}).get("status")
+        if (review is not None and review != "supported") or (reviewed_only and review != "supported"):
+            continue
+        if item["status"] == "evidence_linked":
+            result.extend(tuple(pair) for pair in item.get("stage_attachments", []))
+    return result
+
+
+def knowledge_metrics(snapshot):
+    """Count independently reviewed before/after transitions, not raw paper paths."""
+    groups = [g for g in snapshot.get("groups", []) if g.get("explanation_model") == "knowledge_transitions_v1"]
+    if not groups:
+        return {}
+    reviewed = [g for g in groups if g.get("semantic_review", {}).get("status") == "supported"]
+    edges = [e for e in snapshot.get("edges", []) if e.get("semantic_review", {}).get("status") == "supported"]
+    diagnostics = evaluate_groups(reviewed, snapshot.get("nodes", []), edges, snapshot.get("comparisons", []))
+    pairs = set()
+    attachments = set()
+    anchors = set()
+    for item in diagnostics:
+        if item["status"] != "evidence_linked":
+            continue
+        pairs.update(tuple(pair) for pair in item.get("transition_pairs", []))
+        attachments.update(tuple(pair) for pair in item.get("stage_attachments", []))
+        anchors.update(item.get("stage_anchor_ids", []))
+    _, acyclic, depth = _spine_shape(pairs)
+    return {"knowledge_depth": depth if acyclic else 0, "knowledge_transitions": len(pairs) if acyclic else 0,
+            "stage_count": len(anchors), "attached_papers": len({a for a, b in attachments})}

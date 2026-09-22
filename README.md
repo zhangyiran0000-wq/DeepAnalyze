@@ -302,3 +302,28 @@ separate and unchanged. Targeted evidence rereads, local updates, relation revie
 Each new normalized synthesis attempt is also retained in local analysis history.
 Short exact source-passage IDs can be cited directly; the entire passage must be
 at most 2,000 characters and is preserved as source-bound evidence.
+
+
+### Problem transitions and supporting papers
+
+New analyses distinguish the author's claimed problem from demonstrated results,
+evaluation conditions and unresolved limits. Outcomes are recorded as demonstrated,
+partial, not tested, contradicted, or unknown. Missing evidence is not a negative
+result; model judgments remain open to review.
+
+Each paper has a role in its explanatory line: advance, revision, proposal, local
+improvement, replication, or enabling tool. All analyzed papers remain in the tree.
+Supporting work can attach to an existing stage with evidence from both sources,
+without inventing an evolutionary link or increasing depth. A removal test records
+which inference or boundary would be lost without that paper, relative to the
+other retained sources. These roles are not paper-quality or popularity scores.
+
+Knowledge depth counts independently reviewed before/after changes in understanding,
+including supported revisions and reframings. Repeated improvements do not add
+stages automatically. Mechanisms can change within one concrete research question;
+logical continuity, historical influence and empirical superiority are assessed
+separately. Older saved results retain their original paper-path metric.
+
+The explicit reanalysis API creates an independent, fresh-budget branch over the
+same already-read sources. It does not search for new literature or change the
+original run; continuing an unfinished run still uses its remaining original budget.

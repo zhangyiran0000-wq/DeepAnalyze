@@ -11,7 +11,7 @@ import copy
 from collections import deque
 
 from .graph import EDGE_KINDS, validate_edges
-from .synthesis_quality import evaluate_groups
+from .synthesis_quality import evaluate_groups, stage_connections, knowledge_metrics
 
 
 _PROGRESSION = {"addresses", "builds_on"}
@@ -22,6 +22,8 @@ _HARD_GROUP_ISSUES = {
     "disconnected_spine", "cyclic_spine", "missing_spine", "semantic_claim_unverified",
     "missing_core_concept", "multiple_core_targets", "missing_label_nouns",
     "label_noun_limit_exceeded", "invalid_label_nouns", "duplicate_label_nouns",
+    "duplicate_member_support", "missing_research_role", "missing_research_assessment", "invalid_stage_root",
+    "missing_knowledge_transition", "redundant_knowledge_transition", "incremental_work_on_spine", "invalid_stage_attachment",
 }
 
 
@@ -42,11 +44,12 @@ def _eligible(item, reviewed_only=False):
     return "semantic_review" not in item or status == "supported"
 
 
-def _component(seed, nodes, edges, comparisons):
+def _component(seed, nodes, edges, comparisons, stage_pairs=()):
     adjacency = {key: set() for key in nodes}
     pairs = [(e.get("source"), e.get("target")) for e in edges
              if e.get("status") == "supported" and e.get("kind") in _CONNECTIONS]
     pairs += [(c.get("source"), c.get("target")) for c in comparisons]
+    pairs += list(stage_pairs)
     for source, target in pairs:
         if source in adjacency and target in adjacency:
             adjacency[source].add(target)
@@ -97,7 +100,7 @@ def _shape(nodes, edges):
     return max(lengths.values(), default=0), forks
 
 
-def _assessment(snapshot, required_ids):
+def _assessment(snapshot, required_ids, knowledge_objective=False):
     snapshot = snapshot or {}
     nodes = {item["id"]: item for item in _records(snapshot.get("nodes")) if item.get("id")}
     groups = [group for group in _records(snapshot.get("groups")) if group.get("id") != "group_unresolved"]
@@ -127,6 +130,8 @@ def _assessment(snapshot, required_ids):
         original = originals[(edge["source"], edge["target"], edge["kind"])]
         if original.get("status") == "supported" and edge.get("status") != "supported":
             invalid_edges += 1
+        if "semantic_review" in original:
+            edge["semantic_review"] = copy.deepcopy(original["semantic_review"])
         if _eligible(original):
             edges.append(edge)
         if _eligible(original, reviewed_only=True):
@@ -158,7 +163,9 @@ def _assessment(snapshot, required_ids):
                 diagnostic["issues"].append("semantic_claim_unverified")
                 diagnostic["status"] = "incomplete"
         supported = {key for item in diagnostics for key in item["covered_member_ids"]}
-        connected = _component(snapshot.get("seed_id"), nodes, links, parallels)
+        stage_view = {**snapshot, "edges": links, "comparisons": parallels}
+        stage_pairs = stage_connections(stage_view, reviewed_only)
+        connected = _component(snapshot.get("seed_id"), nodes, links, parallels, stage_pairs)
         return supported & grounded_nodes & connected, diagnostics, connected
 
     explained, diagnostics, connected = coverage(edges, comparisons)
@@ -169,6 +176,16 @@ def _assessment(snapshot, required_ids):
                    for group in groups]
     active = [members for members in memberships if members]
     depth, forks = _shape(reviewed_component & reviewed, reviewed_edges)
+    if knowledge_objective or any(g.get("explanation_model") == "knowledge_transitions_v1" for g in groups):
+        assessed = {**snapshot, "edges": reviewed_edges,
+                    "nodes": [node for key, node in nodes.items() if key in reviewed_component & reviewed]}
+        depth = knowledge_metrics(assessed).get("knowledge_depth", 0)
+        valid_groups = [g for g in groups if g.get("semantic_review", {}).get("status") == "supported"]
+        valid_stages = evaluate_groups(valid_groups, assessed["nodes"], reviewed_edges, reviewed_comparisons)
+        # Virtual edges here describe already-validated stages for fork counting only.
+        steps = [{"source": a, "target": b, "kind": "addresses", "status": "supported"}
+                 for d in valid_stages if d["status"] == "evidence_linked" for a, b in d.get("transition_pairs", [])]
+        _, forks = _shape(reviewed_component & reviewed, steps)
     branches = max(0, len(active) - 1) + forks
     singletons = sum(len(members) == 1 for members in active)
     score = (len(explained & required), -hard, depth, -branches, -singletons)
@@ -177,7 +194,7 @@ def _assessment(snapshot, required_ids):
 
 
 def candidate_score(snapshot, required_ids):
-    """Higher is better: coverage, hard validity, reviewed depth, fewer branches.
+    """Higher is better: coverage, hard validity, reviewed knowledge depth, fewer branches.
 
     The final item prefers fewer singleton groups. Edge counts and self-reported
     metrics are never rewards. Existing completion-blocking schema defects are
@@ -194,8 +211,10 @@ def choose_candidate(previous, candidate, required_ids):
     also survive. Neither snapshot is mutated.
     """
     required = set(required_ids)
-    before = _assessment(previous, required)
-    after = _assessment(candidate, required)
+    knowledge_objective = any(g.get("explanation_model") == "knowledge_transitions_v1"
+                              for value in (previous or {}, candidate or {}) for g in value.get("groups", []))
+    before = _assessment(previous, required, knowledge_objective)
+    after = _assessment(candidate, required, knowledge_objective)
     if previous is None:
         accepted, reason = True, "Retain the first candidate as the initial working explanation."
     elif before["nodes"] - after["nodes"]:

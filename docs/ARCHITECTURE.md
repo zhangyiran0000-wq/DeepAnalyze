@@ -226,11 +226,14 @@ most five `label_nouns`. A core concept may be a technical phrase containing mor
 than one noun. The parser rejects explicit goal lists; it does not perform reliable
 language-independent noun counting or prove semantic unity.
 
-Every group must attribute its same explanatory claim to every member's own
-verified evidence. Its supported chronological skeleton can branch; grounded
-alternatives and challenges may attach directly. Pure complementary association
-cannot silently extend coverage. Genuine parallel alternatives can have depth zero;
-the one-paper starting case also has depth zero. Neither requires invented progress.
+New groups explain one concrete evolving question, using each member's own
+verified evidence. They do not require identical mechanisms or outcomes. A reviewed
+spine records changes in understanding, with explicit before/after statements.
+Local improvements and repeated validation attach to a stage with evidence from
+both papers and do not increase knowledge depth. A new proposal or negative result
+may change the mainline without demonstrating a complete solution. These judgments
+are relative to the current retained corpus, not universal paper-quality rankings.
+Legacy snapshots retain their original paper-path interpretation.
 
 Repair uses the full compact tree and up to six cached source packets per attempt.
 Invalid evidence records and disconnected members are prioritized together with
@@ -255,8 +258,14 @@ The interface uses a dark navy workspace theme, supports sidebar collapse and di
 
 ## Semantic prompt entry points
 
-The model-facing prompts are inline in `src/deepanalyze/engine.py`:
-`_exploration_prompt`, `_synthesis_prompt`, and `_revision_prompt`. Graph schemas
+Shared outcome and mainline rules live in `src/deepanalyze/research_protocol.py`.
+Discovery and initial synthesis prompts live in `engine.py`; local repair and
+regrouping in `synthesis_loop.py`; independent review in `claim_review.py`.
+An explicit cached-corpus reanalysis uses `reanalysis.py`: up to seven paper
+assessments per call, followed by one structure-only synthesis. Batch checkpoints
+allow interrupted assessments to resume without repeating completed batches.
+The original run is unchanged, and all calls share the branch's stated budget.
+Graph schemas
 and deterministic validation are separate from the model's semantic judgments.
 The implementation does not train a network or solve the research-compression
 objective globally; prompt-driven synthesis remains an experimental component.

@@ -14,7 +14,7 @@ from datetime import date
 from urllib.parse import urlsplit
 
 from .store import utc_now
-from .synthesis_quality import evaluate_groups
+from .synthesis_quality import evaluate_groups, knowledge_metrics
 
 PALETTE = ["#64c8b5", "#a49bea", "#dfad68", "#78addd", "#d887a7", "#a5be73"]
 EDGE_KINDS = {"addresses", "builds_on", "challenges", "related"}
@@ -247,12 +247,42 @@ def build_snapshot(proposal: dict, papers: dict[str, dict], previous: dict | Non
         groups[group_id]["label_nouns"] = text_list(item.get("label_nouns"), 30)
         claim = item.get("explanatory_claim") or {}
         groups[group_id]["explanatory_claim"] = {field: clean_text(claim.get(field)) for field in ("constraint", "mechanism", "consequence")} if isinstance(claim, dict) else {}
-        groups[group_id]["spine"] = [{field: clean_text(link.get(field)) for field in ("source", "target", "claim_connection")}
-                                     for link in (item.get("spine") or [])[:250] if isinstance(link, dict)]
-        groups[group_id]["member_support"] = [{"paper_id": clean_text(record.get("paper_id")),
-                                               "claim_connection": clean_text(record.get("claim_connection")),
-                                               "evidence_ids": text_list(record.get("evidence_ids"), 30)}
-                                              for record in (item.get("member_support") or [])[:500] if isinstance(record, dict)]
+        # The contract fields are opt-in for legacy snapshots: do not invent
+        # a transition model when an older proposal did not provide one.
+        contract_keys = ("explanation_model", "root_id")
+        if any(key in item or (prior and key in prior) for key in contract_keys):
+            model = item.get("explanation_model", prior.get("explanation_model") if prior else None)
+            if model == "knowledge_transitions_v1":
+                groups[group_id]["explanation_model"] = model
+            root_id = clean_text(item.get("root_id", prior.get("root_id") if prior else None), 200)
+            if root_id:
+                groups[group_id]["root_id"] = root_id
+        groups[group_id]["spine"] = []
+        for link in (item.get("spine") or [])[:250]:
+            if not isinstance(link, dict):
+                continue
+            record = {field: clean_text(link.get(field)) for field in ("source", "target", "claim_connection")}
+            if any(field in link for field in ("before", "after", "transition_type")):
+                record["before"] = clean_text(link.get("before"), 900)
+                record["after"] = clean_text(link.get("after"), 900)
+                transition = link.get("transition_type")
+                record["transition_type"] = transition if transition in {"advance", "revision", "reframing"} else ""
+            groups[group_id]["spine"].append(record)
+        groups[group_id]["member_support"] = []
+        for record in (item.get("member_support") or [])[:500]:
+            if not isinstance(record, dict):
+                continue
+            support = {"paper_id": clean_text(record.get("paper_id")),
+                       "claim_connection": clean_text(record.get("claim_connection")),
+                       "evidence_ids": text_list(record.get("evidence_ids"), 30)}
+            if any(field in record for field in ("role", "stage_anchor_id", "knowledge_change", "removal_effect", "attachment_evidence_ids")):
+                role = record.get("role")
+                support.update({"role": role if role in {"advance", "revision", "proposal", "incremental", "replication", "tooling"} else "",
+                    "stage_anchor_id": clean_text(record.get("stage_anchor_id"), 200),
+                    "knowledge_change": clean_text(record.get("knowledge_change"), 900),
+                    "removal_effect": clean_text(record.get("removal_effect"), 900),
+                    "attachment_evidence_ids": text_list(record.get("attachment_evidence_ids"), 30)})
+            groups[group_id]["member_support"].append(support)
         memberships[group_id] = text_list(item.get("member_ids"), 500)
         for merged_id in text_list(item.get("merge_from"), 100):
             if merged_id in old_groups and merged_id != group_id:
@@ -314,6 +344,21 @@ def build_snapshot(proposal: dict, papers: dict[str, dict], previous: dict | Non
             "external_ids": copy.deepcopy(paper.get("external_ids", old.get("external_ids", {}))),
             "added_iteration": old.get("added_iteration", iteration),
         }
+        raw_assessment = item.get("research_assessment", old.get("research_assessment"))
+        if isinstance(raw_assessment, dict):
+            outcome = raw_assessment.get("outcome")
+            valid_outcomes = {"demonstrated", "partial", "not_tested", "contradicted", "unknown"}
+            assessment_refs = resolve_evidence_refs(raw_assessment.get("evidence_ids"), {paper_id})
+            if outcome not in valid_outcomes:
+                outcome = "unknown"
+            nodes[paper_id]["research_assessment"] = {
+                "outcome": outcome,
+                "claimed_problem": clean_text(raw_assessment.get("claimed_problem"), 1200),
+                "demonstrated_result": clean_text(raw_assessment.get("demonstrated_result"), 1200),
+                "conditions": clean_text(raw_assessment.get("conditions"), 1200),
+                "unresolved": clean_text(raw_assessment.get("unresolved"), 1200),
+                "evidence_ids": list(dict.fromkeys(assessment_refs)),
+            }
         observations = item.get("research_observations", old.get("research_observations", []))
         nodes[paper_id]["research_observations"] = []
         for observation in observations[:10] if isinstance(observations, list) else []:
@@ -360,10 +405,12 @@ def build_snapshot(proposal: dict, papers: dict[str, dict], previous: dict | Non
     # A model can cite the exact ID of a short retrieved passage instead of
     # minting another quote alias. Resolve it against that endpoint's source,
     # retaining the whole passage as visible evidence; never guess or truncate.
-    referenced = {}
+    referenced = {key: set(node.get("research_assessment", {}).get("evidence_ids", [])) for key, node in nodes.items()}
     for group in groups.values():
         for record in group.get("member_support", []):
             referenced.setdefault(record["paper_id"], set()).update(record.get("evidence_ids", []))
+            for owner in (record["paper_id"], record.get("stage_anchor_id")):
+                referenced.setdefault(owner, set()).update(record.get("attachment_evidence_ids", []))
     for record in proposal.get("edges", []) + proposal.get("comparisons", []):
         if isinstance(record, dict):
             for owner in (record.get("source"), record.get("target")):
@@ -384,6 +431,13 @@ def build_snapshot(proposal: dict, papers: dict[str, dict], previous: dict | Non
                 nodes[owner]["evidence"] = evidence
                 evidence_aliases.setdefault(ref, set()).add((owner, match["id"]))
     evidence_owner = {ev["id"]: n["id"] for n in nodes.values() for ev in n.get("evidence", []) if ev.get("verified")}
+    for key, node in nodes.items():
+        assessment = node.get("research_assessment")
+        if isinstance(assessment, dict):
+            assessment["evidence_ids"] = [ref for ref in resolve_evidence_refs(assessment.get("evidence_ids", []), {key})
+                                          if evidence_owner.get(ref) == key]
+            if assessment.get("outcome") == "demonstrated" and not assessment["evidence_ids"]:
+                assessment["outcome"] = "unknown"
     seen_pairs = set()
     # New decisions supersede previous pairs; unchanged evidence-linked comparisons
     # are reused rather than regenerated on every iteration.
@@ -439,8 +493,22 @@ def build_snapshot(proposal: dict, papers: dict[str, dict], previous: dict | Non
     # explicitly reject a link to retract it. Previous snapshots stay immutable.
     edges, validation_gaps, metrics = validate_edges(list(nodes.values()), edge_proposals)
     for group in groups.values():
+        anchors = set()
+        if group.get("root_id"):
+            anchors.add(group["root_id"])
+        for spine in group.get("spine", []):
+            anchors.update(value for value in (spine.get("source"), spine.get("target")) if value)
         for record in group.get("member_support", []):
             record["evidence_ids"] = resolve_evidence_refs(record["evidence_ids"], {record["paper_id"]})
+            if "attachment_evidence_ids" in record:
+                anchor = record.get("stage_anchor_id")
+                if anchor not in anchors:
+                    record["stage_anchor_id"] = ""
+                    record["attachment_evidence_ids"] = []
+                else:
+                    owners = {record["paper_id"], anchor}
+                    record["attachment_evidence_ids"] = [ref for ref in resolve_evidence_refs(record.get("attachment_evidence_ids"), owners)
+                        if evidence_owner.get(ref) in owners]
     group_quality = evaluate_groups(list(groups.values()), list(nodes.values()), edges, comparisons)
     for quality in group_quality:
         groups[quality["group_id"]]["explanation_quality"] = quality
@@ -472,9 +540,11 @@ def build_snapshot(proposal: dict, papers: dict[str, dict], previous: dict | Non
                 if key == "edges" and before[item_id].get("status") == "supported" and after[item_id].get("status") != "supported":
                     reason = "Retracted supported status: " + after[item_id].get("rationale", "Further support is required.")
                 changes.append({"kind": "updated", "target_id": item_id, "reason": reason})
-    return {"id": uuid.uuid4().hex, "iteration": iteration, "created_at": utc_now(),
+    snapshot = {"id": uuid.uuid4().hex, "iteration": iteration, "created_at": utc_now(),
             "seed_id": seed_id, "scope": scope, "groups": list(groups.values()),
             "nodes": sorted(nodes.values(), key=lambda node: (_date_key(node) or 0, node["id"])),
             "edges": edges, "comparisons": comparisons, "synthesis_quality": synthesis_quality,
             "gaps": gaps, "changes": changes, "metrics": metrics,
             "review_notes": list(dict.fromkeys(notes)), "demo": bool(demo)}
+    metrics.update(knowledge_metrics(snapshot))
+    return snapshot

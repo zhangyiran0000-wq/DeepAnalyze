@@ -149,6 +149,18 @@ class Application:
             and not self.store.synthesis_successor(run_id))
         return run
 
+    def reanalyze(self, run_id: str, config: dict) -> dict:
+        with self._lock:
+            self._check_idle()
+            if config is None:
+                raise ValueError("A fresh run configuration is required.")
+            normalized = normalize_config(config)
+            original = self.store.get(run_id)
+            self._require_auth(original["mode"])
+            run = self.store.reanalyze(run_id, normalized)
+            self._launch(run["id"])
+            return self.store.get(run["id"])
+
     def retry_synthesis(self, run_id: str) -> dict:
         with self._lock:
             self._check_idle()
@@ -375,6 +387,10 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(self.app.restore(parts[2]))
             elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "retry-synthesis":
                 self._json(self.app.retry_synthesis(parts[2]), 201)
+            elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "reanalyze":
+                if "config" not in payload:
+                    raise ValueError("A fresh run configuration is required.")
+                self._json(self.app.reanalyze(parts[2], payload.get("config")), 201)
             elif len(parts) == 4 and parts[:2] == ["api", "runs"] and parts[3] == "resume":
                 self._json(self.app.resume(parts[2], payload.get("snapshot_id", ""), payload.get("config")), 201)
             else:

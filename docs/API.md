@@ -212,6 +212,7 @@ technical edge or promote a candidate to a mainline anchor.
 `can_retry_synthesis`. The former is a normalized analysis tree with
 `completion_status: "incomplete"`, never a completed snapshot or raw paper cache.
 `POST /api/runs/{id}/retry-synthesis` with `{}` creates a continuation branch that shares the original exploration budget.
+`POST /api/runs/{id}/reanalyze` requires a body with an explicit fresh `config`; it creates an independent branch that reanalyzes only the original run's readable cached sources under the new budget. It requires an idle run and authentication, preserves the original run and discovery cache, and never carries over budget usage.
 It requires an idle worker and existing authentication. It first restores the
 saved sources and unfinished tree without retrieval, revises automatically,
 and then resumes the original remaining exploration rounds after validation.

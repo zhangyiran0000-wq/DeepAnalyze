@@ -73,15 +73,28 @@ def _object(properties):
 
 _STRING = {"type": "string"}
 _STRINGS = {"type": "array", "items": _STRING}
+_BOUNDED = {"type": "string", "maxLength": 900}
+_ASSESSMENT_TEXT = {"type": "string", "maxLength": 1200}
 _GROUP = _object({
     "id": _STRING, "label": _STRING, "description": _STRING,
     "common_problem": _STRING, "progression": _STRING, "open_problem": _STRING,
     "member_ids": _STRINGS, "merge_from": _STRINGS, "separation_reason": _STRING,
     "core_concept": _STRING,
+    "explanation_model": {"type": "string", "enum": ["knowledge_transitions_v1"]},
+    "root_id": _STRING,
     "label_nouns": {"type": "array", "items": _STRING, "minItems": 1, "maxItems": 5},
     "explanatory_claim": _object({"constraint": _STRING, "mechanism": _STRING, "consequence": _STRING}),
-    "spine": {"type": "array", "items": _object({"source": _STRING, "target": _STRING, "claim_connection": _STRING})},
-    "member_support": {"type": "array", "items": _object({"paper_id": _STRING, "claim_connection": _STRING, "evidence_ids": _STRINGS})},
+    "spine": {"type": "array", "items": _object({
+        "source": _STRING, "target": _STRING, "claim_connection": _STRING,
+        "before": _BOUNDED, "after": _BOUNDED,
+        "transition_type": {"type": "string", "enum": ["advance", "revision", "reframing"]},
+    })},
+    "member_support": {"type": "array", "items": _object({
+        "paper_id": _STRING, "claim_connection": _STRING, "evidence_ids": _STRINGS,
+        "role": {"type": "string", "enum": ["advance", "revision", "proposal", "incremental", "replication", "tooling"]},
+        "stage_anchor_id": _STRING, "knowledge_change": _BOUNDED, "removal_effect": _BOUNDED,
+        "attachment_evidence_ids": _STRINGS,
+    })},
 })
 _COMPARISON = _object({
     "source": _STRING, "target": _STRING, "shared_problem": _STRING,
@@ -101,6 +114,11 @@ _NODE = _object({
         "statement": _STRING,
         "basis": {"type": "string", "enum": ["author_claim", "reported_experiment", "model_inference", "unknown"]},
         "evidence_ids": _STRINGS})},
+    "research_assessment": _object({
+        "outcome": {"type": "string", "enum": ["demonstrated", "partial", "not_tested", "contradicted", "unknown"]},
+        "claimed_problem": _ASSESSMENT_TEXT, "demonstrated_result": _ASSESSMENT_TEXT,
+        "conditions": _ASSESSMENT_TEXT, "unresolved": _ASSESSMENT_TEXT, "evidence_ids": _STRINGS,
+    }),
 })
 _EDGE = _object({
     "source": _STRING, "target": _STRING,
