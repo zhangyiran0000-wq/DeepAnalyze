@@ -1,8 +1,9 @@
-"""Private Tailscale Serve gateway for an already running loopback application."""
+"""Private Tailscale gateway for an already running loopback application."""
 from __future__ import annotations
 
 import argparse
 import http.client
+import ipaddress
 import re
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -28,15 +29,35 @@ def validate_public_origin(value):
     return "https://" + hostname.lower() + (f":{port}" if port and port != 443 else "")
 
 
+def validate_tailnet_address(value):
+    try:
+        address = ipaddress.IPv4Address(value)
+    except (ValueError, TypeError):
+        raise ValueError("Use the computer's assigned Tailscale IPv4 address.") from None
+    if address not in ipaddress.IPv4Network("100.64.0.0/10"):
+        raise ValueError("Only a Tailscale IPv4 address in 100.64.0.0/10 is allowed.")
+    return str(address)
+
+
 class PrivateProxyServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, port, public_origin, backend_port):
-        self.public_origin = validate_public_origin(public_origin)
+    def __init__(self, port, public_origin, backend_port, *, tailscale_ip=None):
         if not isinstance(backend_port, int) or not 1 <= backend_port <= 65535:
             raise ValueError("Invalid local backend port.")
+        if tailscale_ip is not None:
+            if public_origin is not None:
+                raise ValueError("Choose direct Tailscale IP or HTTPS Serve, not both.")
+            bind_address = validate_tailnet_address(tailscale_ip)
+            self.public_origin = None
+        else:
+            bind_address = "127.0.0.1"
+            self.public_origin = validate_public_origin(public_origin)
         self.backend_port = backend_port
-        super().__init__(("127.0.0.1", port), PrivateProxyHandler)
+        self.direct_tailnet = tailscale_ip is not None
+        super().__init__((bind_address, port), PrivateProxyHandler)
+        if self.direct_tailnet:
+            self.public_origin = f"http://{bind_address}:{self.server_port}"
 
 
 class PrivateProxyHandler(BaseHTTPRequestHandler):
@@ -56,6 +77,11 @@ class PrivateProxyHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _forward(self):
+        if self.server.direct_tailnet:
+            try:
+                validate_tailnet_address(self.client_address[0])
+            except ValueError:
+                return self._error(403, "Direct gateway access requires a Tailscale source address.")
         origin = self.server.public_origin
         port = self.server.server_port
         local_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
@@ -124,13 +150,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8766)
     parser.add_argument("--backend-port", type=int, default=8765)
-    parser.add_argument("--public-origin", required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--public-origin", help="HTTPS *.ts.net origin for a loopback Serve proxy")
+    mode.add_argument("--tailscale-ip", help="Bind only this computer's assigned Tailscale IPv4 address")
     args = parser.parse_args(argv)
     try:
-        server = PrivateProxyServer(args.port, args.public_origin, args.backend_port)
+        server = PrivateProxyServer(args.port, args.public_origin, args.backend_port, tailscale_ip=args.tailscale_ip)
     except (ValueError, OSError):
-        parser.exit(1, "Cannot start private gateway. Check the HTTPS Tailscale origin and local ports.\n")
-    print(f"Private gateway listening on 127.0.0.1:{server.server_port}", flush=True)
+        parser.exit(1, "Cannot start private gateway. Check the Tailscale address/origin and local ports.\n")
+    print(f"Private gateway listening on {server.server_address[0]}:{server.server_port}", flush=True)
     try:
         server.serve_forever(poll_interval=0.3)
     except KeyboardInterrupt:

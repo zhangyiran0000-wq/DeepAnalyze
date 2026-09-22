@@ -5,8 +5,9 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
-from deepanalyze.remote import PrivateProxyServer, validate_public_origin
+from deepanalyze.remote import PrivateProxyServer, validate_public_origin, validate_tailnet_address
 from deepanalyze.server import Application, LocalServer
 from tests.test_server import OfflineProvider, NoLiterature
 
@@ -85,6 +86,45 @@ class RemoteAccessTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validate_public_origin(value)
 
+    def test_tailnet_addresses_are_canonical_ipv4_addresses_in_tailnet_range(self):
+        for value in ("100.64.0.1", "100.127.255.254"):
+            with self.subTest(value=value):
+                self.assertEqual(validate_tailnet_address(value), value)
+
+        for value in (
+            "0.0.0.0",
+            "127.0.0.1",
+            "192.168.1.10",
+            "8.8.8.8",
+            "2001:db8::1",
+            "not-an-ip",
+            "100.63.255.255",
+            "100.128.0.1",
+            None,
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                validate_tailnet_address(value)
+
+    def test_direct_tailnet_gateway_binds_validated_ip_and_derives_http_origin(self):
+        assigned_port = 48765
+        bind_calls = []
+
+        def fake_init(server, address, handler, bind_and_activate=True):
+            bind_calls.append((address, handler, bind_and_activate))
+            server.server_address = address
+            server.server_port = assigned_port
+
+        with patch("deepanalyze.remote.ThreadingHTTPServer.__init__", new=fake_init):
+            gateway = PrivateProxyServer(0, None, 8765, tailscale_ip="100.64.12.34")
+
+        self.assertEqual(bind_calls[0][0], ("100.64.12.34", 0))
+        self.assertEqual(gateway.server_address, ("100.64.12.34", 0))
+        self.assertEqual(gateway.server_port, assigned_port)
+        self.assertEqual(gateway.public_origin, "http://100.64.12.34:48765")
+
+    def test_direct_tailnet_gateway_rejects_conflicting_public_origin(self):
+        with self.assertRaises(ValueError):
+            PrivateProxyServer(0, "https://research.example.ts.net", 8765, tailscale_ip="100.64.12.34")
 
 if __name__ == "__main__":
     unittest.main()

@@ -156,7 +156,18 @@ and origin checks. Request bodies and runtime stderr are not logged.
 ### Private phone access with Tailscale
 
 Connect the computer and phone to the same tailnet. Keep the research service
-running on port 8765, then start its separate local gateway (replace the example
+running on port 8765. For direct access without Serve/HTTPS setup, replace the
+example IP below with the computer's assigned Tailscale IPv4 address:
+
+    python scripts/serve_private.py --tailscale-ip 100.64.0.1
+
+Open the matching HTTP address and port 8766 on the phone. This mode binds only
+the chosen Tailscale IP and accepts Tailscale source addresses. It never binds
+all interfaces or a LAN address. Your tailnet access policy and host firewall
+still apply; permit port 8766 only on the Tailscale interface if needed.
+The HTTP connection travels inside Tailscale's encrypted tunnel.
+
+Alternatively, start a loopback gateway for Tailscale Serve (replace the example
 origin with the computer's Tailscale DNS name):
 
     python scripts/serve_private.py --public-origin https://computer.example.ts.net
@@ -165,7 +176,8 @@ origin with the computer's Tailscale DNS name):
 Tailscale may ask the tailnet administrator to enable Serve/HTTPS first.
 Open the HTTPS origin on the phone with Tailscale connected. Serve access follows
 your tailnet access policy; keep it limited to your intended devices/users.
-The gateway and research server both bind to loopback. The gateway validates
+In Serve mode both processes bind to loopback. In direct mode the research
+server stays on loopback and only the gateway binds the Tailscale IP. The gateway validates
 the configured Host and Origin before forwarding to the fixed local backend;
 the backend still checks the session token on mutations. It can start without
 restarting or interrupting research. No Funnel or public port exposure is needed.
