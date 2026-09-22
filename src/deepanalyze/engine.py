@@ -25,6 +25,8 @@ from .synthesis_quality import evaluate_groups, stage_connections
 from .research_protocol import ASSESSMENT_RULES, MAINLINE_RULES
 from .reanalysis import reanalyze_sources
 from .evidence_tasks import candidate_bridges, survey_packets
+from .literature import LiteratureError
+from .codex import CodexError
 
 
 class _Stop(Exception):
@@ -822,10 +824,33 @@ class ResearchEngine:
             progress["elapsed_seconds"] = round(time.monotonic() - started, 1)
             self.store.update(run_id, status=stop.status, phase=stop.status, stop_reason=stop.reason, progress=progress)
             self.store.event(run_id, stop.status, stop.reason)
-        except Exception:
+        except Exception as error:
             # Exceptions may contain local paths, credentials, or provider payloads.
-            # Never persist their text in public progress or exports.
-            message = "The run could not complete a source or model operation. Check local authentication/connectivity and resume the saved analysis; the last draft is preserved and no failed iteration was published."
+            # Never persist their text in public progress or exports. Keep the
+            # category allowlisted so an unrelated programming failure is never
+            # presented as an authentication/connectivity problem.
+            has_draft = bool(run.get("latest_snapshot"))
+            try:
+                working_state = self.store.working(run_id)
+                has_draft = has_draft or bool(working_state.get("synthesis_draft")) or bool(self.store.get(run_id).get("latest_snapshot"))
+            except Exception:
+                pass
+            if isinstance(error, LiteratureError):
+                source_codes = {
+                    "ambiguous_title": ("source_ambiguous", "The search results did not unambiguously identify the seed. Use a DOI, arXiv link, or a more specific title."),
+                    "source_not_found": ("source_not_found", "The seed was not found in supported scholarly sources. Check the identifier or title."),
+                    "source_unavailable": ("source_unavailable", "Retrieving or parsing the scholarly source could not complete. Try again later."),
+                }
+                code, message = source_codes.get(getattr(error, "code", None), source_codes["source_unavailable"])
+            elif isinstance(error, CodexError):
+                code, message = "model_access_failed", "The model operation could not complete. Check the local Codex runtime configuration and try again."
+            else:
+                code, message = "internal_error", "The run encountered an internal error before completing this step."
+            if has_draft:
+                message += " A saved draft is available to resume."
+            else:
+                message += " No completed snapshot was published."
+            progress["failure_code"] = code
             progress["elapsed_seconds"] = round(time.monotonic() - started, 1)
             self.store.update(run_id, status="failed", phase="failed", stop_reason=message, progress=progress)
             self.store.event(run_id, "failed", message)

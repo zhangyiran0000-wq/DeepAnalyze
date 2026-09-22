@@ -28,7 +28,11 @@ from .source_pages import parse_source_page, parse_arxiv_search_abstract
 
 
 class LiteratureError(RuntimeError):
-    """A public, credential-free retrieval failure."""
+    """A public, credential-free retrieval failure with a safe category."""
+
+    def __init__(self, message, *, code="source_unavailable"):
+        super().__init__(message)
+        self.code = code
 
 
 HOSTS = {"api.semanticscholar.org", "api.crossref.org", "export.arxiv.org", "arxiv.org", "www.arxiv.org", "aclanthology.org"}
@@ -376,12 +380,30 @@ class LiteratureClient:
             return self._landing_paper("https://aclanthology.org/" + acl_url.group(1) + "/")
         if "://" in seed:
             raise LiteratureError("Use a paper title, DOI link, arXiv link, or ACL Anthology paper link. Arbitrary URLs are not fetched.")
-        results = self.search(seed, limit=5)
-        if not results:
-            raise LiteratureError("No matching paper was found. Try the DOI or arXiv identifier.")
-        scored = sorted(((SequenceMatcher(None, _norm(seed), _norm(p["title"])).ratio(), p) for p in results), key=lambda x: x[0], reverse=True)
+        search_error = None
+        try:
+            results = self.search(seed, limit=5)
+        except LiteratureError as error:
+            results, search_error = [], error
+        def rank(candidates):
+            return sorted(((SequenceMatcher(None, _norm(seed), _norm(p["title"])).ratio(), p)
+                           for p in candidates), key=lambda pair: pair[0], reverse=True)
+        scored = rank(results)
+        # A nonempty topical result list is not a resolved paper identity. Web
+        # fallbacks can favor recent related works, so try a bounded title-only
+        # query before declaring an older seed ambiguous or unavailable.
+        if not scored or scored[0][0] < 0.93:
+            try:
+                precise = self._arxiv(query=seed, limit=5, exact_title=True)
+                scored = rank(results + precise)
+            except LiteratureError:
+                pass
+        if not scored:
+            if search_error:
+                raise search_error
+            raise LiteratureError("No matching paper was found. Try the DOI or arXiv identifier.", code="source_not_found")
         if scored[0][0] < 0.56 or (len(scored) > 1 and scored[0][0] < 0.9 and scored[0][0] - scored[1][0] < 0.07):
-            raise LiteratureError("The title is ambiguous. Use the full title, DOI, or arXiv identifier.")
+            raise LiteratureError("The title is ambiguous. Use the full title, DOI, or arXiv identifier.", code="ambiguous_title")
         paper = scored[0][1]
         paper["resolution_similarity"] = round(scored[0][0], 3)
         return paper

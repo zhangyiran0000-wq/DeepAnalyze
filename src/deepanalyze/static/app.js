@@ -149,6 +149,12 @@
   "Reading": "阅读",
   "Synthesis": "归纳",
   "Paper assessment": "核对论文证据",
+  "The search results did not unambiguously identify the seed. Use a DOI, arXiv link, or a more specific title.": "检索结果未能唯一确认种子论文。请使用 DOI、arXiv 链接或更准确的标题。",
+  "The seed was not found in supported scholarly sources. Check the identifier or title.": "未在支持的论文来源中找到种子论文，请核对标识符或标题。",
+  "Retrieving or parsing the scholarly source could not complete. Try again later.": "论文来源获取或解析失败，请稍后重试。",
+  "The model operation could not complete. Check the local Codex runtime configuration and try again.": "模型调用未能完成，请检查本地 Codex 运行时配置后重试。",
+  "The run encountered an internal error before completing this step.": "程序在完成当前步骤前发生内部错误。",
+
   "Reanalyzing the same cached sources with a fresh explanation; no new literature search is performed.": "正在使用同一批已读材料重新归纳，不增加新论文。",
   "Building one fresh structure from the completed source assessments.": "已完成分批证据核对，正在重建主线。",
   "Consolidation": "合并审查",
@@ -209,6 +215,12 @@
   const ui = (value) => {
     if (preferredLanguage !== "zh") return value;
     if (translations.zh[value]) return translations.zh[value];
+    for (const [suffix, translated] of [[" A saved draft is available to resume.", " 已保留草稿，可继续归纳。"], [" No completed snapshot was published.", " 本次未发布完成的快照。"]]) {
+      if (typeof value === "string" && value.endsWith(suffix)) {
+        const base=value.slice(0,-suffix.length);
+        if (translations.zh[base]) return translations.zh[base]+translated;
+      }
+    }
     let match = /^Running the (exploration|paper_assessment|synthesis|consolidation|evidence_reading|local_synthesis|relation_review|regrouping|evidence_feedback) role within the configured model-call budget\.$/.exec(value);
     if (match) return `正在执行${({exploration:"探索",paper_assessment:"论文证据核对",synthesis:"归纳",consolidation:"合并审查",evidence_reading:"补读证据",local_synthesis:"局部归纳",relation_review:"关系证据审查",regrouping:"主线归并",evidence_feedback:"缺口交回探索"})[match[1]]}，受配置的调用预算限制。`;
     match = /^Assessing source batch (\d+)\.$/.exec(value);

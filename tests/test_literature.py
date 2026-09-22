@@ -105,10 +105,33 @@ class LiteratureTests(unittest.TestCase):
 
     def test_ambiguous_title_requires_identifier(self):
         with tempfile.TemporaryDirectory() as tmp:
-            client = LiteratureClient(Path(tmp))
+            client = LiteratureClient(Path(tmp), fetcher=lambda url: b"")
             client.search = lambda *args, **kwargs: [_paper("Shared research method alpha"), _paper("Shared research method beta")]
             with self.assertRaises(LiteratureError):
                 client.resolve("Shared research method")
+
+    def test_title_resolution_falls_back_from_related_recent_hits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = LiteratureClient(Path(tmp), fetcher=lambda url: b"")
+            client.search = lambda *args, **kwargs: [_paper("Recent overview of bounded memory"), _paper("New retrieval systems")]
+            exact = _paper("Bounded Memory Retrieval", external_ids={"arxiv":"2001.12345"})
+            calls = []
+            def arxiv(**kwargs):
+                calls.append(kwargs)
+                return [_paper("Bounded Memory Retrieval: Recent Survey"), exact]
+            client._arxiv = arxiv
+            result = client.resolve("Bounded Memory Retrieval")
+            self.assertEqual(result["id"], exact["id"])
+            self.assertEqual(result["resolution_similarity"],1.0)
+            self.assertEqual(calls,[{"query":"Bounded Memory Retrieval","limit":5,"exact_title":True}])
+
+    def test_exact_title_fallback_does_not_accept_unrelated_work(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            client = LiteratureClient(Path(tmp), fetcher=lambda url: b"")
+            client.search = lambda *args, **kwargs: [_paper("Completely unrelated scientific study")]
+            with self.assertRaises(LiteratureError) as caught:
+                client.resolve("Bounded Memory Retrieval")
+            self.assertEqual(caught.exception.code,"ambiguous_title")
 
     def test_arxiv_fallback_preserves_doi_identity(self):
         atom = b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>'
