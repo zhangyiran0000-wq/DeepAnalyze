@@ -9,6 +9,7 @@ from .refinement import choose_candidate, local_patch_proposal, candidate_score
 from .graph import build_snapshot
 from .schemas import SYNTHESIS_SCHEMA, CONSOLIDATION_SCHEMA
 from .research_protocol import ASSESSMENT_RULES, MAINLINE_RULES
+from .source_context import review_source_context
 
 LOCAL_SCHEMA = {"type": "object", "additionalProperties": False,
                 "properties": {key: SYNTHESIS_SCHEMA["properties"][key] for key in
@@ -78,6 +79,18 @@ def refine_snapshot(snapshot, papers, required_ids, *, scope, seed_id, iteration
         save(value, role, revision)
 
     def audit(raw, role, accepted=False):
+        # Quotations prove attribution only. Include neighboring subjects and
+        # caveats so reviews can distinguish this work from cited predecessors.
+        for key, rows in review_source_context(raw, papers).items():
+            merged, seen_context, used = [], set(), 0
+            for row in rows + context.get(key, []):
+                identity = (row.get("id"), row.get("text"))
+                length = len(row.get("text", ""))
+                if identity in seen_context or used + length > 18000:
+                    continue
+                seen_context.add(identity); used += length; merged.append(row)
+            if merged:
+                context[key] = merged
         requests = [item for item in checks(raw, context) if item["id"] not in cache]
         value = apply_reviews(raw, cache, context)
         persist(value, role, accepted)

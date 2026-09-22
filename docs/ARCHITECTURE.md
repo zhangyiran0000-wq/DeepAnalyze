@@ -265,6 +265,9 @@ An explicit cached-corpus reanalysis uses `reanalysis.py`: up to seven paper
 assessments per call, followed by one structure-only synthesis. Batch checkpoints
 allow interrupted assessments to resume without repeating completed batches.
 The original run is unchanged, and all calls share the branch's stated budget.
+Semantic review includes bounded neighboring source passages, preserving the subject
+and qualifications around excerpts; a cited predecessor's result must not be
+attributed to the current paper. Source context participates in review cache keys.
 Graph schemas
 and deterministic validation are separate from the model's semantic judgments.
 The implementation does not train a network or solve the research-compression

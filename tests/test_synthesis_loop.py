@@ -98,7 +98,7 @@ class SynthesisLoopTests(unittest.TestCase):
         best = feedback["best_snapshot"]
         self.assertTrue(best["synthesis_quality"]["pending_reviews"])
         self.assertFalse(_explanation_complete(best, set(papers)))
-        self.assertTrue(any(p.get("id") == "counter" for p in feedback["review_context"]["p0"]))
+        self.assertTrue(any(p.get("id") == "counter" for p in feedback["review_context"]["p1"]))
 
 
 if __name__ == "__main__":
