@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#081321">
+  <title>DeepAnalyze · Follow the underlying logic</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/layout.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="DeepAnalyze home"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M16 5v8M16 13 6 22m10-9 10 9"/><circle cx="16" cy="5" r="3"/><circle cx="6" cy="24" r="3"/><circle cx="26" cy="24" r="3"/></svg><span>Deep<span class="brand-light">Analyze</span></span></a>
+      <span class="brand-caption">A workspace for research evolution</span>
+      <button class="button button-quiet sidebar-toggle" id="sidebar-toggle" type="button" aria-expanded="true" aria-controls="workspace-sidebar">☰ <span>Sidebar</span></button><div class="topbar-actions"><label class="language-picker" for="language-select"><span>Language</span><select id="language-select" aria-label="Interface language"><option value="zh">中文</option><option value="en">English</option></select></label><span class="local-badge"><span class="status-dot"></span><span id="environment-label">Local workspace</span></span><button class="button button-quiet" id="auth-button" type="button"><span class="account-icon" aria-hidden="true">◉</span><span id="auth-label">Connect Codex</span></button></div>
+    </header>
+    <aside class="sidebar" id="workspace-sidebar" aria-label="Research workspace">
+      <div class="sidebar-section composer" id="composer">
+        <div class="section-eyebrow">START AN EXPLORATION</div>
+        <label class="input-label" for="seed-input">One paper. A deeper question.</label>
+        <p class="field-hint">Start with a title, DOI, or arXiv link.</p>
+        <textarea id="seed-input" rows="4" placeholder="Which paper do you want to trace?" maxlength="2000"></textarea>
+        <details class="budget-details">
+          <summary>Exploration budget <span class="summary-hint" id="budget-summary">10 rounds</span></summary>
+          <div class="budget-grid">
+            <label>Rounds<input id="budget-rounds" type="number" min="1" max="20" value="10"></label>
+            <label>Read / round<input id="budget-read" type="number" min="1" max="30" value="10"></label>
+            <label>Candidates / round<input id="budget-candidates" type="number" min="1" max="60" value="30"></label>
+            <label>Model calls<input id="budget-calls" type="number" min="1" max="100" value="100"></label>
+            <label>Time limit (min)<input id="budget-time" type="number" min="1" max="300" value="300"></label>
+            <label class="wide-field">Model <span class="optional">optional</span><input id="model-input" type="text" value="gpt-5.6-luna" placeholder="gpt-5.6-luna" maxlength="120"></label>
+          </div>
+          <p class="field-hint">Hard limits on work, not a guarantee of research completeness.</p>
+        </details>
+        <button class="button button-primary full-width" id="start-button" type="button">Trace this paper <span aria-hidden="true">↗</span></button>
+        <button class="button button-demo full-width" id="demo-button" type="button">Explore an illustrative demo <span aria-hidden="true">→</span></button>
+        <p class="demo-hint">Demo uses synthetic examples. No login or model calls.</p>
+      </div>
+      <div class="sidebar-section runs-section"><div class="section-row"><span class="section-eyebrow">YOUR EXPLORATIONS</span><span class="count-badge" id="runs-count">0</span></div><div id="run-list" class="run-list"><p class="quiet-empty">Your research history will appear here.</p></div></div>
+      <div class="sidebar-section trash-section"><details id="trash-details"><summary>Trash <span class="count-badge" id="trash-count">0</span></summary><div id="trash-list" class="trash-list"><p class="quiet-empty">Deleted explorations can be restored here.</p></div><button class="button button-small button-danger-quiet trash-empty" id="trash-empty" type="button" hidden>Empty trash</button></details></div>
+      <div class="sidebar-footer"><span class="tiny-branch" aria-hidden="true">⌘</span><p>Keep the evidence.<br><strong>Discover the connections.</strong></p><span class="version-tag">v0.1</span></div>
+    </aside>
+    <main class="main-area">
+      <div class="workspace-heading"><div><div class="section-eyebrow" id="workspace-eyebrow">THE RESEARCH LANDSCAPE</div><h1 id="workspace-title">Follow the underlying logic.</h1><p id="workspace-subtitle">From one paper to the problems that shaped what came next.</p></div><span class="mode-badge" id="mode-badge" hidden>ILLUSTRATIVE DEMO</span></div>
+      <div class="inline-notice" id="notice" role="status" aria-live="polite" hidden><span id="notice-text"></span><button class="notice-dismiss icon-button" id="notice-dismiss" type="button" aria-label="Dismiss notice">×</button></div>
+      <div class="language-boundary" id="language-boundary">历史分析保留原语言；新运行按当前语言生成</div>
+      <div class="active-run-banner" id="active-run-banner" role="status" aria-live="polite" hidden></div>
+      <section class="run-progress" id="run-progress" aria-label="Exploration progress" hidden><div class="progress-top"><div><span id="phase-dot" class="status-dot"></span><strong id="phase-label">Preparing exploration</strong><span class="phase-detail" id="phase-detail"></span></div><button class="button button-small button-danger-quiet" id="stop-button" type="button">Stop exploration</button></div><div class="progress-stats" id="progress-stats"></div><details class="activity-details"><summary>Activity <span id="latest-event"></span></summary><ol id="activity-log"></ol></details></section>
+      <div class="map-toolbar" id="map-toolbar" hidden><div class="version-control"><label for="snapshot-select">VERSION</label><select id="snapshot-select" aria-label="Select saved iteration"></select><span id="historical-label" class="historical-label" hidden>Saved snapshot</span></div><div class="toolbar-actions"><button class="button button-small button-quiet" id="retry-synthesis-button" type="button" hidden>Continue synthesis</button><button class="button button-small button-quiet" id="resume-button" type="button">Branch from here ↗</button><a class="button button-small button-outlined" id="export-button" download>Export HTML <span aria-hidden="true">↓</span></a></div></div>
+      <section class="research-workspace" id="research-workspace" aria-label="Research tree">
+        <div class="empty-state" id="empty-state"><div class="empty-eyebrow"><span class="status-dot"></span> START WITH CURIOSITY</div><h2>More than a collection.<br>A chain of understanding.</h2><p>Trace what each method changed, which problem it addressed, and what remained unresolved.</p><div class="empty-map" aria-hidden="true"><div class="empty-line"></div><div class="sample-node sample-one"><span class="sample-number">01</span><div><strong>An open problem</strong><span>Where the question begins</span></div></div><div class="sample-node sample-two"><span class="sample-number">02</span><div><strong>A change in mechanism</strong><span>How a later idea responds</span></div></div><div class="sample-node sample-three"><span class="sample-number">03</span><div><strong>The next limitation</strong><span>What opens a new direction</span></div></div><div class="empty-footer"><span>↓ Time moves down</span><span>↔ Shared intent groups ideas</span></div></div>
+        </div>
+        <div class="map-pane" id="map-pane" hidden><div class="map-context"><div class="map-legend"><span><i class="legend-line"></i>Supported connection</span><span><i class="legend-line hypothesis"></i>Hypothesis</span></div><div class="map-controls" aria-label="Map zoom"><button class="button button-small button-quiet" id="zoom-out" type="button" title="Zoom out">−</button><span id="zoom-label">100%</span><button class="button button-small button-quiet" id="zoom-in" type="button" title="Zoom in">+</button><button class="button button-small button-quiet" id="zoom-reset" type="button">100%</button><button class="button button-small button-quiet" id="zoom-fit" type="button">Fit</button></div></div><div class="graph-scroll" id="graph-scroll" tabindex="0" aria-label="Scrollable chronological research map"><div class="graph-stage" id="graph-stage"><svg class="connections" id="connections" aria-label="Connections between papers"></svg><div id="timeline"></div></div></div><div class="map-footer"><span id="map-metrics">No saved iteration yet</span><span>Depth counts supported problem transitions.</span></div></div>
+        <aside class="inspector" id="inspector" aria-label="Selected paper or connection details" hidden><div class="inspector-top"><span class="section-eyebrow" id="inspector-type">EXPLORATION NOTES</span><button class="icon-button" id="close-inspector" title="Show exploration overview" aria-label="Show exploration overview" type="button">×</button></div><div id="inspector-content" tabindex="0" role="region" aria-labelledby="inspector-type"></div></aside>
+      </section>
+      <div class="workspace-bottom"><span>Evidence first. Connections with context.</span><span id="save-status">Snapshots preserve every iteration.</span></div>
+    </main>
+  </div>
+  <dialog id="trash-purge-dialog" aria-labelledby="trash-purge-title"><form method="dialog"><button class="dialog-close icon-button" aria-label="Close confirmation">×</button></form><span class="section-eyebrow">TRASH</span><h2 id="trash-purge-title">Empty Trash?</h2><p id="trash-purge-copy">This permanently deletes the deleted explorations currently shown in Trash.</p><div class="dialog-actions"><button class="button button-quiet" value="cancel">Cancel</button><button class="button button-danger-quiet" id="trash-purge-confirm" value="default">Permanently delete</button></div></dialog>
+  <dialog id="auth-dialog" aria-labelledby="auth-title"><form method="dialog"><button class="dialog-close icon-button" aria-label="Close connection settings">×</button></form><span class="section-eyebrow">MODEL CONNECTION</span><h2 id="auth-title">Connect your Codex runtime</h2><p class="dialog-description">Use an existing local Codex session, sign in with ChatGPT, or provide an API key. Credentials are excluded from research snapshots and exports.</p><div class="auth-state" id="auth-state">Checking connection…</div><a class="quota-link" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">Codex remaining quota ↗</a><button class="button button-primary full-width" id="chatgpt-login" type="button">Sign in with ChatGPT ↗</button><div id="login-result" class="login-result" hidden></div><div class="auth-divider"><span>OR USE AN API KEY</span></div><label class="input-label" for="api-key">OpenAI API key</label><input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="Paste your API key"><p class="field-hint">API usage is billed separately. The key is passed to the local Codex runtime.</p><button class="button button-outlined full-width" id="api-login" type="button">Connect with API key</button><div class="auth-bottom"><button class="button button-quiet button-small" id="auth-refresh" type="button">Check connection</button><button class="button button-quiet button-small" id="auth-logout" type="button" hidden>Sign out</button></div><p class="auth-error" id="auth-error" role="alert" hidden></p></dialog>
+  <noscript>This workspace needs JavaScript to display the research tree.</noscript>
+</body>
+</html>

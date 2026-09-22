@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "deepanalyze"
+version = "0.1.0"
+description = "Trace evidence-backed problem evolution across research papers."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "DeepAnalyze contributors"}]
+dependencies = []
+
+[project.optional-dependencies]
+pdf = ["pypdf>=5"]
+
+[project.scripts]
+deepanalyze = "deepanalyze.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["deepanalyze*"]
+
+[tool.setuptools.package-data]
+deepanalyze = ["static/*.html", "static/*.css", "static/*.js"]

@@ -1,0 +1,16 @@
+* text=auto
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+/Intention.md export-ignore
+/intention.md export-ignore
+/intend.md export-ignore
+/research export-ignore
+/data export-ignore
+/.deepanalyze export-ignore
+/.codex export-ignore
+/.agents export-ignore
+/artifacts export-ignore
+/.env export-ignore
